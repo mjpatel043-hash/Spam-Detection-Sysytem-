@@ -212,7 +212,7 @@ public class SecuritySpamDetector {
 
             System.out.println("\nMessage : " + msg);
             System.out.printf("Spam Score : %.4f%n", score);
-            System.out.println("Decision : " + (spam ? "🚫 BLOCK & QUARANTINE" : "✅ ALLOW"));
+            System.out.println("Decision : " + (spam ? " BLOCK & QUARANTINE" : " ALLOW"));
         }
     }
 }
