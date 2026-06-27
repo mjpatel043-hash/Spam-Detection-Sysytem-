@@ -171,7 +171,7 @@ public class SecuritySpamDetector {
             System.out.printf("Analyzed Content : \"%s\"\n", userInput);
             System.out.printf("Spam Threat Level: %.2f%%\n", spamPercentage);
             System.out.printf("System Decision  : %s\n", 
-                    (triggerAction ? "🛑 [BLOCK & QUARANTINE] High Threat Vector Detected" : "✅ [ALLOW] Clear Traffic"));
+                    (triggerAction ? " [BLOCK & QUARANTINE] High Threat Vector Detected" : " [ALLOW] Clear Traffic"));
             System.out.println("=================================================\n");
         }
         
