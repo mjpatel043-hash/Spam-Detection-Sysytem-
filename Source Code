@@ -3,11 +3,10 @@ import java.util.regex.Pattern;
 
 public class SecuritySpamDetector {
 
-    // Heuristic Thresholds
-    private static final double SPAM_THRESHOLD = 0.75;
-
+    // Heuristic Thresholds (Converted to percentage)
+    private static final double SPAM_THRESHOLD_PERCENT = 75.0;
     private static final Pattern HIGH_RISK_URLS = Pattern.compile(
-            ".*(bit\\.ly|tinyurl\\.com|t\\.co|cutt\\.ly|free-prizes|verify-account|claim-now).*",
+            ".*\\b(bit\\.ly|tinyurl\\.com|t\\.co|cutt\\.ly|free-prizes|verify-account|claim-now)\\b.*", 
             Pattern.CASE_INSENSITIVE
     );
 
@@ -15,13 +14,13 @@ public class SecuritySpamDetector {
     private final Set<String> vocabulary = new HashSet<>();
     private final Map<String, Integer> spamWordCounts = new HashMap<>();
     private final Map<String, Integer> hamWordCounts = new HashMap<>();
-
     private int totalSpamMessages = 0;
     private int totalHamMessages = 0;
     private int totalSpamWords = 0;
     private int totalHamWords = 0;
 
     public SecuritySpamDetector() {
+        // Keep baseline threat intel vectors trained internally
         trainBaseline();
     }
 
@@ -29,190 +28,153 @@ public class SecuritySpamDetector {
      * Normalizes text to counter common adversarial obfuscation techniques.
      */
     private String sanitizeInput(String text) {
-
-        if (text == null)
-            return "";
-
+        if (text == null) return "";
         return text.toLowerCase()
-                .replaceAll("3", "e")
+                .replaceAll("3", "e") // De-obfuscate common leetspeak
                 .replaceAll("1", "i")
                 .replaceAll("0", "o")
-                .replaceAll("5", "s")
-                .replaceAll("7", "t")
-                .replaceAll("4", "a")
-                .replaceAll("[^a-z0-9./\\-\\s]", "")
+                .replaceAll("[^a-z0-9\\s]", "") // Strip evasive punctuation
                 .trim();
     }
 
     /**
-     * Evaluates whether a message is spam.
+     * Evaluates whether a text message is spam based on heuristics and percentage threshold.
      */
-    public boolean isSpam(String rawMessage) {
-
-        String cleanMessage = sanitizeInput(rawMessage);
-
-        // Rule 1 : High Risk URLs
-        if (HIGH_RISK_URLS.matcher(cleanMessage).matches()) {
-            return true;
+    public boolean isSpam(String rawMessage, double calculatedPercentage) {
+        // Rule 1: Instant Blacklist Heuristics (Threat Intel / High-Risk Shorteners)
+        if (HIGH_RISK_URLS.matcher(rawMessage).matches()) {
+            return true; 
         }
 
-        // Rule 2 : Excessive Capital Letters
-        long letters = rawMessage.chars()
-                .filter(Character::isLetter)
-                .count();
-
-        long upperCaseLetters = rawMessage.chars()
-                .filter(Character::isUpperCase)
-                .count();
-
-        if (letters > 10 && ((double) upperCaseLetters / letters) > 0.50) {
-            return true;
+        // Rule 2: Structural Evasion Checks (Excessive capitalization / urgency indicators)
+        long upperCaseCount = rawMessage.chars().filter(Character::isUpperCase).count();
+        if (rawMessage.length() > 10 && ((double) upperCaseCount / rawMessage.length()) > 0.50) {
+            return true; // Likely a high-urgency social engineering attempt
         }
 
-        // Rule 3 : Naive Bayes Classification
-        return calculateSpamProbability(rawMessage) >= SPAM_THRESHOLD;
+        // Rule 3: Probabilistic Naive Bayes Classification matching percentage scale
+        return calculatedPercentage >= SPAM_THRESHOLD_PERCENT;
     }
 
     /**
-     * Trains the classifier.
+     * Trains the Naive Bayes model on a specific instance.
      */
     public void train(String message, boolean isSpam) {
-
         String cleanText = sanitizeInput(message);
         String[] tokens = cleanText.split("\\s+");
 
-        if (isSpam)
+        if (isSpam) {
             totalSpamMessages++;
-        else
+        } else {
             totalHamMessages++;
+        }
 
         for (String token : tokens) {
-
-            if (token.isEmpty())
-                continue;
-
+            if (token.isEmpty()) continue;
             vocabulary.add(token);
 
             if (isSpam) {
-
-                spamWordCounts.put(token,
-                        spamWordCounts.getOrDefault(token, 0) + 1);
-
+                spamWordCounts.put(token, spamWordCounts.getOrDefault(token, 0) + 1);
                 totalSpamWords++;
-
             } else {
-
-                hamWordCounts.put(token,
-                        hamWordCounts.getOrDefault(token, 0) + 1);
-
+                hamWordCounts.put(token, hamWordCounts.getOrDefault(token, 0) + 1);
                 totalHamWords++;
             }
         }
     }
 
     /**
-     * Computes spam probability using Naive Bayes.
+     * Computes the spam likelihood and converts it into a 0 - 100% scale.
      */
-    public double calculateSpamProbability(String rawMessage) {
-
-        if (totalSpamMessages + totalHamMessages == 0)
-            return 0.0;
-
+    public double calculateSpamPercentage(String rawMessage) {
         String cleanText = sanitizeInput(rawMessage);
         String[] tokens = cleanText.split("\\s+");
 
-        double totalMessages = totalSpamMessages + totalHamMessages;
+        // Prior Probabilities
+        double pSpam = (double) totalSpamMessages / (totalSpamMessages + totalHamMessages);
+        double pHam = (double) totalHamMessages / (totalSpamMessages + totalHamMessages);
 
-        // Laplace-smoothed priors
-        double pSpam = (totalSpamMessages + 1.0) / (totalMessages + 2.0);
-        double pHam = (totalHamMessages + 1.0) / (totalMessages + 2.0);
-
+        // Using logs to prevent floating-point underflow
         double logSpamLikelihood = Math.log(pSpam);
         double logHamLikelihood = Math.log(pHam);
 
         int vocabSize = vocabulary.size();
 
         for (String token : tokens) {
+            if (token.isEmpty() || !vocabulary.contains(token)) continue;
 
-            if (token.isEmpty())
-                continue;
-
-            int spamOccurrences = spamWordCounts.getOrDefault(token, 0);
-            double pWordGivenSpam =
-                    (double) (spamOccurrences + 1) /
-                            (totalSpamWords + vocabSize);
-
+            // Laplace smoothing
+            int spamWordOccurrences = spamWordCounts.getOrDefault(token, 0);
+            double pWordGivenSpam = (double) (spamWordOccurrences + 1) / (totalSpamWords + vocabSize);
             logSpamLikelihood += Math.log(pWordGivenSpam);
 
-            int hamOccurrences = hamWordCounts.getOrDefault(token, 0);
-            double pWordGivenHam =
-                    (double) (hamOccurrences + 1) /
-                            (totalHamWords + vocabSize);
-
+            int hamWordOccurrences = hamWordCounts.getOrDefault(token, 0);
+            double pWordGivenHam = (double) (hamWordOccurrences + 1) / (totalHamWords + vocabSize);
             logHamLikelihood += Math.log(pWordGivenHam);
         }
 
+        // Convert back from log scale safely
         double maxLog = Math.max(logSpamLikelihood, logHamLikelihood);
-
         double spamExp = Math.exp(logSpamLikelihood - maxLog);
         double hamExp = Math.exp(logHamLikelihood - maxLog);
 
-        return spamExp / (spamExp + hamExp);
+        double probability = spamExp / (spamExp + hamExp);
+        
+        // Convert fraction score (0.0 - 1.0) directly to percent scale (0.0% - 100.0%)
+        return probability * 100.0;
     }
 
-    /**
-     * Baseline Training Dataset
-     */
     private void trainBaseline() {
-
-        // Spam Messages
+        // High risk / Phishing baseline data
         train("URGENT: Your bank account is locked. Click bit.ly/verify-account to resolve now.", true);
-
         train("Congratulations! You won a $1000 Walmart gift card. Claim now at free-prizes.com", true);
-
         train("Get a guaranteed low interest loan instantly. Reply YES to opt in.", true);
-
         train("FINAL NOTICE: IRS tax penalty outstanding. Call immediately.", true);
 
-        // Legitimate Messages
+        // Legitimate traffic baseline data
         train("Hey, are we still meeting up for lunch today at 1 PM?", false);
-
         train("Your verification code is 482910. It expires in 10 minutes.", false);
-
         train("Hey mom, I left my jacket at your house. Can I pick it up tomorrow?", false);
-
         train("The server deployment completed successfully without errors.", false);
     }
 
     public static void main(String[] args) {
-
         SecuritySpamDetector detector = new SecuritySpamDetector();
+        Scanner scanner = new Scanner(System.in);
 
-        String[] testMessages = {
+        System.out.println("=================================================");
+        System.out.println("  CYBERSECURITY TEXT ENGINE: SPAM & PHISH CHECKER ");
+        System.out.println("=================================================");
+        System.out.println("Type 'exit' to shut down the analysis engine.\n");
 
-                "URGENT: Verify your credentials at cutt.ly/safe-login",
+        while (true) {
+            System.out.print("Enter text message to analyze: ");
+            String userInput = scanner.nextLine();
 
-                "CLICK HERE TO CLAIM YOUR FREE PRIZE NOW!!!!!",
+            // Exit guard clause
+            if ("exit".equalsIgnoreCase(userInput.trim())) {
+                System.out.println("\n[!] Shutting down security monitor. Stay safe.");
+                break;
+            }
 
-                "Hey b0ss, can you check out the 1atest security patch?",
+            if (userInput.trim().isEmpty()) {
+                System.out.println("[!] Input blank. Please enter valid content.\n");
+                continue;
+            }
 
-                "Your account security is compromised, click to get free-prizes immediately",
+            // Calculate percentage score and assess action threshold
+            double spamPercentage = detector.calculateSpamPercentage(userInput);
+            boolean triggerAction = detector.isSpam(userInput, spamPercentage);
 
-                "Meeting postponed to tomorrow at 10 AM.",
-
-                "Congratulations! Claim your reward now at bit.ly/winner"
-        };
-
-        System.out.println("========== Security Message Processing Analysis ==========");
-
-        for (String msg : testMessages) {
-
-            boolean spam = detector.isSpam(msg);
-            double score = detector.calculateSpamProbability(msg);
-
-            System.out.println("\nMessage : " + msg);
-            System.out.printf("Spam Score : %.4f%n", score);
-            System.out.println("Decision : " + (spam ? " BLOCK & QUARANTINE" : " ALLOW"));
+            // Display results
+            System.out.println("-------------------------------------------------");
+            System.out.printf("Analyzed Content : \"%s\"\n", userInput);
+            System.out.printf("Spam Threat Level: %.2f%%\n", spamPercentage);
+            System.out.printf("System Decision  : %s\n", 
+                    (triggerAction ? "🛑 [BLOCK & QUARANTINE] High Threat Vector Detected" : "✅ [ALLOW] Clear Traffic"));
+            System.out.println("=================================================\n");
         }
+        
+        scanner.close();
     }
 }
